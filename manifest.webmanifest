@@ -1,0 +1,17 @@
+{
+  "name": "Organiza Downloads",
+  "short_name": "Organiza",
+  "description": "Organizador offline da pasta Downloads no ChromeOS",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
