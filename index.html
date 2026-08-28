@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <title>Organiza Downloads</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Organiza Downloads</h1>
+      <p>Classifique e mova arquivos soltos da pasta Downloads — localmente e sem enviar seus dados para a internet.</p>
+    </div>
+    <span id="offlineBadge">Offline-first</span>
+  </header>
+
+  <main>
+    <section class="toolbar card">
+      <div class="row">
+        <button id="chooseFolder">1. Escolher pasta Downloads</button>
+        <button id="analyze" disabled>2. Analisar Downloads</button>
+        <button id="organize" disabled>3. Organizar agora</button>
+        <button id="undo" disabled>Desfazer última organização</button>
+      </div>
+      <div class="status">
+        <strong>Pasta:</strong> <span id="folderName">nenhuma selecionada</span>
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="card stat"><span>Arquivos soltos</span><strong id="countLoose">0</strong></div>
+      <div class="card stat"><span>Classificados</span><strong id="countClassified">0</strong></div>
+      <div class="card stat"><span>Revisar</span><strong id="countReview">0</strong></div>
+      <div class="card stat"><span>Última execução</span><strong id="lastRun">—</strong></div>
+    </section>
+
+    <section class="card settings">
+      <h2>Preferências</h2>
+      <label><input type="checkbox" id="createFolders" checked> Criar subpastas automaticamente</label>
+      <label><input type="checkbox" id="protectOverwrite" checked> Nunca sobrescrever arquivos existentes</label>
+      <label>Ignorar arquivos modificados nas últimas
+        <select id="ignoreRecent">
+          <option value="0">0 horas</option>
+          <option value="1">1 hora</option>
+          <option value="6">6 horas</option>
+          <option value="24" selected>24 horas</option>
+          <option value="72">72 horas</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
+      <div class="sectionHead">
+        <h2>Revisão</h2>
+        <button id="addRule" class="secondary">Adicionar regra</button>
+      </div>
+      <p class="hint">Você pode alterar o destino antes de mover. Correções podem ser salvas como regra local.</p>
+      <div class="tableWrap">
+        <table>
+          <thead>
+            <tr><th>Arquivo</th><th>Categoria</th><th>Destino</th><th>Confiança</th><th>Ação</th></tr>
+          </thead>
+          <tbody id="reviewBody">
+            <tr><td colspan="5" class="empty">Selecione a pasta Downloads e clique em “Analisar Downloads”.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Regras personalizadas</h2>
+      <div id="rules"></div>
+    </section>
+
+    <section class="card">
+      <h2>Histórico</h2>
+      <div id="history" class="history"></div>
+    </section>
+
+    <section class="card note">
+      <strong>Privacidade:</strong> este app processa nomes, metadados e arquivos somente no seu dispositivo. Nenhum backend é necessário para a função principal.
+    </section>
+  </main>
+
+  <dialog id="ruleDialog">
+    <form method="dialog">
+      <h3>Nova regra</h3>
+      <label>Se o nome contiver <input id="ruleContains" placeholder="ex.: imunologia"></label>
+      <label>ou extensão <input id="ruleExt" placeholder="ex.: pdf"></label>
+      <label>mover para <input id="ruleFolder" placeholder="ex.: UNIPÊ/Imunologia" required></label>
+      <menu>
+        <button value="cancel" class="secondary">Cancelar</button>
+        <button id="saveRule" value="default">Salvar regra</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
