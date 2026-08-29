@@ -1,226 +1,27 @@
-const $ = s => document.querySelector(s);
-let dirHandle = null;
-let analysis = [];
-let lastMoves = [];
-let rules = JSON.parse(localStorage.getItem('od_rules') || '[]');
-let history = JSON.parse(localStorage.getItem('od_history') || '[]');
-
-const defaults = [
-  { exts:['pdf'], folder:'Documentos/PDFs', category:'PDF' },
-  { exts:['doc','docx','odt','rtf','txt'], folder:'Documentos/Textos', category:'Texto' },
-  { exts:['xls','xlsx','csv','ods'], folder:'Documentos/Planilhas', category:'Planilha' },
-  { exts:['ppt','pptx','odp'], folder:'Documentos/Apresentações', category:'Apresentação' },
-  { exts:['jpg','jpeg','png','webp','gif','heic','svg'], folder:'Imagens', category:'Imagem' },
-  { exts:['mp4','mov','avi','mkv','webm'], folder:'Vídeos', category:'Vídeo' },
-  { exts:['mp3','wav','m4a','aac','ogg','flac'], folder:'Áudio', category:'Áudio' },
-  { exts:['zip','rar','7z','tar','gz'], folder:'Compactados', category:'Compactado' },
-  { exts:['exe','msi','dmg','deb','apk','crx'], folder:'Instaladores', category:'Instalador' }
-];
-
-const keywordRules = [
-  { words:['unipe','medicina','simulado','pti','enamed'], folder:'UNIPÊ', category:'UNIPÊ' },
-  { words:['sermao','sermão','ebd','teologia','westminster','igreja','salmo'], folder:'Teologia', category:'Teologia' },
-  { words:['artigo','paper','pesquisa','conic','referencia','referência'], folder:'Pesquisa', category:'Pesquisa' }
-];
-
-function saveState(){
-  localStorage.setItem('od_rules', JSON.stringify(rules));
-  localStorage.setItem('od_history', JSON.stringify(history.slice(0,100)));
-  renderRules(); renderHistory();
-}
-function extOf(name){ return (name.split('.').pop() || '').toLowerCase(); }
-function classify(name){
-  const lower = name.toLowerCase(), ext = extOf(name);
-  for(const r of rules){
-    if((r.contains && lower.includes(r.contains.toLowerCase())) || (r.ext && ext === r.ext.toLowerCase().replace('.',''))){
-      return {category:'Regra pessoal', folder:r.folder, confidence:'Alta'};
-    }
-  }
-  for(const k of keywordRules){
-    if(k.words.some(w => lower.includes(w))) return {category:k.category, folder:k.folder, confidence:'Alta'};
-  }
-  for(const d of defaults){
-    if(d.exts.includes(ext)) return {category:d.category, folder:d.folder, confidence:'Média'};
-  }
-  return {category:'Outros', folder:'Outros', confidence:'Baixa'};
-}
-async function verifyPermission(handle, readWrite=true){
-  const opts = readWrite ? {mode:'readwrite'} : {};
-  if((await handle.queryPermission(opts)) === 'granted') return true;
-  return (await handle.requestPermission(opts)) === 'granted';
-}
-async function getSavedHandle(){ return await idbGet('downloadsHandle'); }
-async function saveHandle(handle){ await idbSet('downloadsHandle', handle); }
-
-function idbOpen(){
-  return new Promise((resolve,reject)=>{
-    const r=indexedDB.open('OrganizaDownloadsDB',1);
-    r.onupgradeneeded=()=>r.result.createObjectStore('kv');
-    r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error);
-  });
-}
-async function idbSet(k,v){const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('kv','readwrite');tx.objectStore('kv').put(v,k);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}
-async function idbGet(k){const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('kv');const q=tx.objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})}
-
-async function chooseFolder(){
-  if(!window.showDirectoryPicker){
-    alert('Seu navegador não oferece a API necessária. Use uma versão recente do Chrome no ChromeOS.');
-    return;
-  }
-  try{
-    dirHandle = await window.showDirectoryPicker({mode:'readwrite'});
-    if(!(await verifyPermission(dirHandle))) return;
-    await saveHandle(dirHandle);
-    $('#folderName').textContent = dirHandle.name;
-    $('#analyze').disabled = false;
-  }catch(e){ if(e.name!=='AbortError') alert(e.message); }
-}
-
-async function analyze(){
-  if(!dirHandle || !(await verifyPermission(dirHandle))) return alert('Autorize novamente o acesso à pasta.');
-  analysis=[];
-  const hours=Number($('#ignoreRecent').value);
-  const cutoff=Date.now()-hours*3600*1000;
-  for await (const [name,handle] of dirHandle.entries()){
-    if(handle.kind!=='file') continue;
-    const file=await handle.getFile();
-    if(hours>0 && file.lastModified>cutoff) continue;
-    const c=classify(name);
-    analysis.push({name, handle, ...c});
-  }
-  renderAnalysis();
-}
-
-function renderAnalysis(){
-  $('#countLoose').textContent=analysis.length;
-  $('#countClassified').textContent=analysis.filter(x=>x.confidence!=='Baixa').length;
-  $('#countReview').textContent=analysis.filter(x=>x.confidence==='Baixa').length;
-  $('#organize').disabled=analysis.length===0;
-  const body=$('#reviewBody'); body.innerHTML='';
-  if(!analysis.length){body.innerHTML='<tr><td colspan="5" class="empty">Nenhum arquivo elegível encontrado.</td></tr>';return;}
-  analysis.forEach((x,i)=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.category)}</td>
-      <td><input data-i="${i}" class="dest" value="${escapeAttr(x.folder)}"></td>
-      <td><span class="badge ${x.confidence==='Alta'?'high':x.confidence==='Média'?'medium':'low'}">${x.confidence}</span></td>
-      <td><button class="secondary remember" data-i="${i}">Lembrar correção</button></td>`;
-    body.appendChild(tr);
-  });
-  document.querySelectorAll('.dest').forEach(el=>el.oninput=e=>analysis[Number(e.target.dataset.i)].folder=e.target.value.trim());
-  document.querySelectorAll('.remember').forEach(el=>el.onclick=e=>rememberCorrection(Number(e.target.dataset.i)));
-}
-
-function rememberCorrection(i){
-  const item=analysis[i];
-  if(!item.folder) return alert('Defina um destino primeiro.');
-  const stem=item.name.replace(/\.[^.]+$/,'').split(/[\s_-]+/).find(p=>p.length>=4) || '';
-  rules.unshift({contains:stem, ext:'', folder:item.folder});
-  saveState(); alert(`Regra salva usando “${stem}” no nome.`);
-}
-
-async function ensureSubfolder(path){
-  const parts=path.split('/').map(x=>x.trim()).filter(Boolean);
-  let current=dirHandle;
-  for(const part of parts) current=await current.getDirectoryHandle(part,{create:$('#createFolders').checked});
-  return current;
-}
-async function existsIn(dir,name){
-  try{ await dir.getFileHandle(name); return true; }catch{return false;}
-}
-async function copyFile(sourceHandle,targetDir,targetName){
-  const file=await sourceHandle.getFile();
-  const target=await targetDir.getFileHandle(targetName,{create:true});
-  const writable=await target.createWritable();
-  await writable.write(file); await writable.close();
-}
-async function uniqueName(dir,name){
-  if(!(await existsIn(dir,name))) return name;
-  const dot=name.lastIndexOf('.'), base=dot>0?name.slice(0,dot):name, ext=dot>0?name.slice(dot):'';
-  let n=2; while(await existsIn(dir,`${base} (${n})${ext}`)) n++;
-  return `${base} (${n})${ext}`;
-}
-
-async function organize(){
-  if(!confirm(`Mover ${analysis.length} arquivo(s) conforme a revisão?`)) return;
-  lastMoves=[];
-  for(const item of analysis){
-    if(!item.folder) continue;
-    try{
-      const targetDir=await ensureSubfolder(item.folder);
-      let targetName=item.name;
-      if(await existsIn(targetDir,targetName)){
-        if($('#protectOverwrite').checked) targetName=await uniqueName(targetDir,targetName);
-      }
-      await copyFile(item.handle,targetDir,targetName);
-      await dirHandle.removeEntry(item.name);
-      lastMoves.push({from:item.name,toFolder:item.folder,toName:targetName});
-    }catch(e){
-      history.unshift({when:new Date().toLocaleString(),text:`Falha: ${item.name} — ${e.message}`});
-    }
-  }
-  history.unshift({when:new Date().toLocaleString(),text:`Organizados ${lastMoves.length} arquivo(s).`});
-  saveState();
-  $('#lastRun').textContent=new Date().toLocaleString();
-  $('#undo').disabled=lastMoves.length===0;
-  await analyze();
-  alert(`Concluído: ${lastMoves.length} arquivo(s) organizados.`);
-}
-
-async function undo(){
-  if(!lastMoves.length) return;
-  if(!confirm('Desfazer a última organização?')) return;
-  let ok=0;
-  for(const m of [...lastMoves].reverse()){
-    try{
-      const folder=await ensureSubfolder(m.toFolder);
-      const src=await folder.getFileHandle(m.toName);
-      let backName=m.from;
-      if(await existsIn(dirHandle,backName)) backName=await uniqueName(dirHandle,backName);
-      await copyFile(src,dirHandle,backName);
-      await folder.removeEntry(m.toName);
-      ok++;
-    }catch(e){ history.unshift({when:new Date().toLocaleString(),text:`Falha ao desfazer ${m.toName}: ${e.message}`}); }
-  }
-  history.unshift({when:new Date().toLocaleString(),text:`Desfeita organização de ${ok} arquivo(s).`});
-  lastMoves=[]; $('#undo').disabled=true; saveState(); await analyze();
-}
-
-function renderRules(){
-  const wrap=$('#rules'); wrap.innerHTML=rules.length?'':'<div class="muted">Nenhuma regra personalizada.</div>';
-  rules.forEach((r,i)=>{
-    const div=document.createElement('div'); div.className='rule';
-    div.innerHTML=`<div><strong>${escapeHtml(r.folder)}</strong><div class="muted">${r.contains?'nome contém: '+escapeHtml(r.contains):''}${r.ext?' extensão: '+escapeHtml(r.ext):''}</div></div><button class="secondary" data-i="${i}">Excluir</button>`;
-    div.querySelector('button').onclick=()=>{rules.splice(i,1);saveState()};
-    wrap.appendChild(div);
-  });
-}
-function renderHistory(){
-  const wrap=$('#history'); wrap.innerHTML=history.length?'':'<div class="muted">Nenhuma execução registrada.</div>';
-  history.forEach(h=>{const d=document.createElement('div');d.className='hist';d.innerHTML=`<span>${escapeHtml(h.text)}</span><span class="muted">${escapeHtml(h.when)}</span>`;wrap.appendChild(d)});
-}
-function escapeHtml(s=''){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function escapeAttr(s=''){return escapeHtml(s)}
-
-$('#chooseFolder').onclick=chooseFolder;
-$('#analyze').onclick=analyze;
-$('#organize').onclick=organize;
-$('#undo').onclick=undo;
-$('#addRule').onclick=()=>$('#ruleDialog').showModal();
-$('#saveRule').onclick=e=>{
-  const contains=$('#ruleContains').value.trim(), ext=$('#ruleExt').value.trim(), folder=$('#ruleFolder').value.trim();
-  if(!folder){e.preventDefault();return}
-  rules.unshift({contains,ext,folder}); saveState();
-  $('#ruleContains').value=$('#ruleExt').value=$('#ruleFolder').value='';
-};
-
-(async()=>{
-  renderRules(); renderHistory();
-  try{
-    const saved=await getSavedHandle();
-    if(saved){
-      dirHandle=saved; $('#folderName').textContent=saved.name;
-      $('#analyze').disabled=false;
-    }
-  }catch{}
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
-})();
+const $=s=>document.querySelector(s);let dirHandle=null,analysis=[],lastMoves=[];let rules=JSON.parse(localStorage.getItem('od_rules')||'[]');let history=JSON.parse(localStorage.getItem('od_history')||'[]');let prefs=JSON.parse(localStorage.getItem('od_prefs')||'{}');
+const defaults=[{exts:['pdf'],folder:'Documentos/PDFs',category:'PDF'},{exts:['doc','docx','odt','rtf','txt','md'],folder:'Documentos/Textos',category:'Texto'},{exts:['xls','xlsx','csv','ods'],folder:'Documentos/Planilhas',category:'Planilha'},{exts:['ppt','pptx','odp'],folder:'Documentos/Apresentações',category:'Apresentação'},{exts:['jpg','jpeg','png','webp','gif','heic','svg'],folder:'Imagens',category:'Imagem'},{exts:['mp4','mov','avi','mkv','webm'],folder:'Vídeos',category:'Vídeo'},{exts:['mp3','wav','m4a','aac','ogg','flac'],folder:'Áudio',category:'Áudio'},{exts:['zip','rar','7z','tar','gz'],folder:'Compactados',category:'Compactado'},{exts:['exe','msi','dmg','deb','apk','crx'],folder:'Instaladores',category:'Instalador'},{exts:['html','css','js','ts','py','java','json','xml','yml','yaml'],folder:'Desenvolvimento',category:'Código'}];
+const keywordRules=[{words:['unipe','medicina','simulado','pti','enamed','internato'],folder:'UNIPÊ',category:'UNIPÊ'},{words:['sermao','sermão','ebd','teologia','westminster','igreja','salmo','spn'],folder:'Teologia',category:'Teologia'},{words:['artigo','paper','pesquisa','conic','referencia','referência','bibliografia'],folder:'Pesquisa',category:'Pesquisa'},{words:['nota fiscal','boleto','recibo','fatura','comprovante'],folder:'Financeiro',category:'Financeiro'},{words:['curriculo','currículo','certificado','diploma'],folder:'Documentos/Pessoais',category:'Pessoal'}];
+const textExts=['txt','md','csv','json','html','xml','yml','yaml'];
+function extOf(n){const p=n.split('.');return p.length>1?p.pop().toLowerCase():''}function formatBytes(b){if(!b)return'0 B';const u=['B','KB','MB','GB'];let i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return`${b.toFixed(i?1:0)} ${u[i]}`}function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function save(){localStorage.setItem('od_rules',JSON.stringify(rules));localStorage.setItem('od_history',JSON.stringify(history.slice(0,150)));localStorage.setItem('od_prefs',JSON.stringify(readPrefs()));renderRules();renderHistory()}
+function readPrefs(){return{createFolders:$('#createFolders').checked,protectOverwrite:$('#protectOverwrite').checked,useYear:$('#useYear').checked,includeHidden:$('#includeHidden').checked,contentHints:$('#contentHints').checked,ignoreRecent:$('#ignoreRecent').value,minConfidence:$('#minConfidence').value}}
+function applyPrefs(){for(const[k,v]of Object.entries(prefs)){const el=$('#'+k);if(!el)continue;if(el.type==='checkbox')el.checked=!!v;else el.value=v}}
+async function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open('OrganizAIDB',2);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('kv'))r.result.createObjectStore('kv')};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}async function idbSet(k,v){const db=await idbOpen();return new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})}async function idbGet(k){const db=await idbOpen();return new Promise((res,rej)=>{const t=db.transaction('kv');const q=t.objectStore('kv').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})}
+async function verifyPermission(h){const o={mode:'readwrite'};if(await h.queryPermission(o)==='granted')return true;return await h.requestPermission(o)==='granted'}
+async function chooseFolder(){if(!window.showDirectoryPicker)return alert('Use uma versão recente do Chrome/ChromeOS.');try{dirHandle=await window.showDirectoryPicker({mode:'readwrite'});if(!await verifyPermission(dirHandle))return;await idbSet('downloadsHandle',dirHandle);$('#folderName').textContent=dirHandle.name;$('#permissionState').textContent='• acesso autorizado';$('#analyze').disabled=false}catch(e){if(e.name!=='AbortError')alert(e.message)}}
+async function contentHint(file){if(!$('#contentHints').checked||!textExts.includes(extOf(file.name))||file.size>2_000_000)return'';try{return(await file.slice(0,100000).text()).toLowerCase()}catch{return''}}
+function classify(name,text=''){const lower=name.toLowerCase(),ext=extOf(name),hay=`${lower} ${text}`;for(const r of rules){if((r.contains&&hay.includes(r.contains.toLowerCase()))||(r.ext&&ext===r.ext.toLowerCase().replace('.','')))return{category:'Regra pessoal',folder:r.folder,confidence:'Alta',score:3}}for(const k of keywordRules){if(k.words.some(w=>hay.includes(w)))return{category:k.category,folder:k.folder,confidence:'Alta',score:3}}for(const d of defaults){if(d.exts.includes(ext))return{category:d.category,folder:d.folder,confidence:'Média',score:2}}return{category:'Outros',folder:'Outros',confidence:'Baixa',score:1}}
+async function analyzeFiles(){if(!dirHandle||!await verifyPermission(dirHandle))return alert('Autorize novamente o acesso à pasta.');save();analysis=[];const hours=Number($('#ignoreRecent').value),cutoff=Date.now()-hours*3600000;const signatures=new Map;for await(const[name,handle]of dirHandle.entries()){if(handle.kind!=='file')continue;if(!$('#includeHidden').checked&&name.startsWith('.'))continue;const file=await handle.getFile();if(hours&&file.lastModified>cutoff)continue;const hint=await contentHint(file),c=classify(name,hint);let folder=c.folder;if($('#useYear').checked)folder=`${folder}/${new Date(file.lastModified).getFullYear()}`;const sig=`${file.size}:${extOf(name)}`;signatures.set(sig,(signatures.get(sig)||0)+1);analysis.push({name,handle,size:file.size,lastModified:file.lastModified,...c,folder,selected:false,sig})}const threshold={low:1,medium:2,high:3}[$('#minConfidence').value]||2;analysis.forEach(x=>{x.selected=x.score>=threshold;x.possibleDuplicate=(signatures.get(x.sig)||0)>1});populateTypeFilter();renderAnalysis();$('#simulate').disabled=!analysis.length}
+function populateTypeFilter(){const sel=$('#filterType'),cur=sel.value;sel.innerHTML='<option value="all">Todos os tipos</option>'+[...new Set(analysis.map(x=>x.category))].sort().map(x=>`<option>${esc(x)}</option>`).join('');if([...sel.options].some(o=>o.value===cur))sel.value=cur}
+function visibleItems(){const q=$('#search').value.toLowerCase(),fc=$('#filterConfidence').value,ft=$('#filterType').value;return analysis.map((x,i)=>({...x,i})).filter(x=>(!q||`${x.name} ${x.category} ${x.folder}`.toLowerCase().includes(q))&&(fc==='all'||x.confidence===fc)&&(ft==='all'||x.category===ft))}
+function renderAnalysis(){const body=$('#reviewBody'),items=visibleItems();body.innerHTML='';if(!analysis.length)body.innerHTML='<tr><td colspan="8" class="empty">Nenhum arquivo elegível encontrado.</td></tr>';else if(!items.length)body.innerHTML='<tr><td colspan="8" class="empty">Nenhum item corresponde aos filtros.</td></tr>';else for(const x of items){const tr=document.createElement('tr');tr.innerHTML=`<td><input type="checkbox" class="itemCheck" data-i="${x.i}" ${x.selected?'checked':''}></td><td><strong>${esc(x.name)}</strong></td><td>${esc(x.category)}</td><td><input class="dest" data-i="${x.i}" value="${esc(x.folder)}"></td><td><span class="badge ${x.confidence==='Alta'?'high':x.confidence==='Média'?'medium':'low'}">${x.confidence}</span></td><td>${formatBytes(x.size)}</td><td>${x.possibleDuplicate?'<span class="dupe">possível duplicado</span>':'<span class="muted">ok</span>'}</td><td><button class="ghost remember" data-i="${x.i}">Lembrar</button></td>`;body.appendChild(tr)}document.querySelectorAll('.itemCheck').forEach(e=>e.onchange=ev=>{analysis[+ev.target.dataset.i].selected=ev.target.checked;updateStats()});document.querySelectorAll('.dest').forEach(e=>e.oninput=ev=>analysis[+ev.target.dataset.i].folder=ev.target.value.trim());document.querySelectorAll('.remember').forEach(e=>e.onclick=ev=>rememberCorrection(+ev.target.dataset.i));updateStats()}
+function updateStats(){const chosen=analysis.filter(x=>x.selected);$('#countLoose').textContent=analysis.length;$('#countSelected').textContent=chosen.length;$('#countReview').textContent=analysis.filter(x=>x.confidence==='Baixa').length;$('#selectedSize').textContent=formatBytes(chosen.reduce((s,x)=>s+x.size,0));$('#countDupes').textContent=analysis.filter(x=>x.possibleDuplicate).length;$('#organize').disabled=!chosen.length;$('#simulate').disabled=!chosen.length;$('#masterCheck').checked=analysis.length>0&&analysis.every(x=>x.selected)}
+function rememberCorrection(i){const x=analysis[i],stem=x.name.replace(/\.[^.]+$/,'').split(/[\s_-]+/).find(p=>p.length>=4)||'';if(!stem||!x.folder)return alert('Defina um destino válido.');rules.unshift({contains:stem,ext:'',folder:x.folder});save();alert(`Regra criada para nomes contendo “${stem}”.`)}
+async function ensureSubfolder(path){let cur=dirHandle;for(const part of path.split('/').map(s=>s.trim()).filter(Boolean))cur=await cur.getDirectoryHandle(part,{create:$('#createFolders').checked});return cur}async function existsIn(dir,name){try{await dir.getFileHandle(name);return true}catch{return false}}async function uniqueName(dir,name){if(!await existsIn(dir,name))return name;const dot=name.lastIndexOf('.'),base=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';let n=2;while(await existsIn(dir,`${base} (${n})${ext}`))n++;return`${base} (${n})${ext}`}async function copyVerified(src,targetDir,targetName){const file=await src.getFile(),target=await targetDir.getFileHandle(targetName,{create:true}),w=await target.createWritable();await w.write(file);await w.close();const verify=await(await targetDir.getFileHandle(targetName)).getFile();if(verify.size!==file.size)throw new Error('falha na verificação de cópia')}
+function simulate(){const chosen=analysis.filter(x=>x.selected);$('#simContent').innerHTML=chosen.length?chosen.map(x=>`<div class="simItem"><strong>${esc(x.name)}</strong><br><span class="muted">→ ${esc(x.folder)}/${esc(x.name)}</span>${x.possibleDuplicate?' <span class="dupe">• possível duplicado</span>':''}</div>`).join(''):'<p>Nenhum arquivo selecionado.</p>';$('#simDialog').showModal()}
+async function organize(){const chosen=analysis.filter(x=>x.selected);if(!chosen.length)return;if(!confirm(`Mover ${chosen.length} arquivo(s)? A operação foi revisada e poderá ser desfeita nesta sessão.`))return;lastMoves=[];let failures=0;for(const x of chosen){try{const target=await ensureSubfolder(x.folder);let targetName=x.name;if(await existsIn(target,targetName)){if($('#protectOverwrite').checked)targetName=await uniqueName(target,targetName);else if(!confirm(`${targetName} já existe em ${x.folder}. Sobrescrever?`))continue}await copyVerified(x.handle,target,targetName);await dirHandle.removeEntry(x.name);lastMoves.push({from:x.name,toFolder:x.folder,toName:targetName})}catch(e){failures++;history.unshift({when:new Date().toLocaleString(),text:`Falha: ${x.name} — ${e.message}`})}}history.unshift({when:new Date().toLocaleString(),text:`Organizados ${lastMoves.length} arquivo(s)${failures?`; ${failures} falha(s)`:''}.`});save();await idbSet('lastMoves',lastMoves);$('#undo').disabled=!lastMoves.length;await analyzeFiles();alert(`Concluído: ${lastMoves.length} movido(s)${failures?`, ${failures} falha(s)`:''}.`)}
+async function undo(){if(!lastMoves.length)lastMoves=await idbGet('lastMoves')||[];if(!lastMoves.length)return alert('Não há operação disponível para desfazer.');if(!confirm(`Restaurar ${lastMoves.length} arquivo(s) à raiz da pasta selecionada?`))return;let ok=0;for(const m of[...lastMoves].reverse()){try{const folder=await ensureSubfolder(m.toFolder),src=await folder.getFileHandle(m.toName);let back=m.from;if(await existsIn(dirHandle,back))back=await uniqueName(dirHandle,back);await copyVerified(src,dirHandle,back);await folder.removeEntry(m.toName);ok++}catch(e){history.unshift({when:new Date().toLocaleString(),text:`Falha ao desfazer ${m.toName}: ${e.message}`})}}history.unshift({when:new Date().toLocaleString(),text:`Desfeita movimentação de ${ok} arquivo(s).`});lastMoves=[];await idbSet('lastMoves',[]);$('#undo').disabled=true;save();await analyzeFiles()}
+function renderRules(){const w=$('#rules');w.innerHTML=rules.length?'':'<div class="muted">Nenhuma regra personalizada.</div>';rules.forEach((r,i)=>{const d=document.createElement('div');d.className='rule';d.innerHTML=`<div><strong>${esc(r.folder)}</strong><div class="muted">${r.contains?'nome/conteúdo contém: '+esc(r.contains):''}${r.ext?' • extensão: '+esc(r.ext):''}</div></div><button class="ghost">Excluir</button>`;d.querySelector('button').onclick=()=>{rules.splice(i,1);save()};w.appendChild(d)})}function renderHistory(){const w=$('#history');w.innerHTML=history.length?'':'<div class="muted">Nenhuma execução registrada.</div>';history.forEach(h=>{const d=document.createElement('div');d.className='hist';d.innerHTML=`<span>${esc(h.text)}</span><span class="muted">${esc(h.when)}</span>`;w.appendChild(d)})}
+function exportRules(){const blob=new Blob([JSON.stringify({version:'ultimate',rules},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='organizai-regras.json';a.click();URL.revokeObjectURL(a.href)}async function importRules(file){try{const data=JSON.parse(await file.text()),incoming=Array.isArray(data)?data:data.rules;if(!Array.isArray(incoming))throw 0;rules=incoming.filter(r=>r&&r.folder&&(r.contains||r.ext));save();alert(`${rules.length} regra(s) importada(s).`)}catch{alert('Arquivo de regras inválido.')}}
+$('#chooseFolder').onclick=chooseFolder;$('#analyze').onclick=analyzeFiles;$('#simulate').onclick=simulate;$('#organize').onclick=organize;$('#undo').onclick=undo;$('#search').oninput=renderAnalysis;$('#filterConfidence').onchange=renderAnalysis;$('#filterType').onchange=renderAnalysis;$('#selectAll').onclick=()=>{analysis.forEach(x=>x.selected=true);renderAnalysis()};$('#selectNone').onclick=()=>{analysis.forEach(x=>x.selected=false);renderAnalysis()};$('#masterCheck').onchange=e=>{analysis.forEach(x=>x.selected=e.target.checked);renderAnalysis()};$('#addRule').onclick=()=>$('#ruleDialog').showModal();$('#saveRule').onclick=e=>{const contains=$('#ruleContains').value.trim(),ext=$('#ruleExt').value.trim(),folder=$('#ruleFolder').value.trim();if(!folder||(!contains&&!ext)){e.preventDefault();return alert('Informe uma palavra ou extensão e o destino.')}rules.unshift({contains,ext,folder});save();$('#ruleContains').value=$('#ruleExt').value=$('#ruleFolder').value=''};$('#exportRules').onclick=exportRules;$('#importRules').onchange=e=>e.target.files[0]&&importRules(e.target.files[0]);$('#clearHistory').onclick=()=>{if(confirm('Limpar o histórico local?')){history=[];save()}};$('#resetPrefs').onclick=()=>{localStorage.removeItem('od_prefs');location.reload()};document.querySelectorAll('.settingsGrid input,.settingsGrid select').forEach(e=>e.addEventListener('change',save));
+(async()=>{applyPrefs();renderRules();renderHistory();try{const saved=await idbGet('downloadsHandle');lastMoves=await idbGet('lastMoves')||[];$('#undo').disabled=!lastMoves.length;if(saved){dirHandle=saved;$('#folderName').textContent=saved.name;$('#analyze').disabled=false;$('#permissionState').textContent='• pasta lembrada (o Chrome pode pedir autorização)'}}catch{}if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{})})();
