@@ -12,7 +12,7 @@ PWA offline-first para ChromeOS que analisa arquivos soltos da pasta Downloads, 
 
 **Tecnologias.** JavaScript, PWA (Service Worker e manifest), File System Access API, GitHub Pages.
 
-**Qualidade e evidências.** Funcionamento offline após a primeira carga e verificação de tamanho antes de remover o original. Este repositório não tem testes automatizados.
+**Qualidade e evidências.** Funcionamento offline após a primeira carga e verificação de tamanho antes de remover o original. Não há testes automatizados; o CI verifica a sintaxe dos scripts JavaScript e a validade dos arquivos JSON. Licença MIT.
 
 ## Recursos Ultimate
 
