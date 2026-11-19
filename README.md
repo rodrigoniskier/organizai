@@ -2,6 +2,18 @@
 
 PWA offline-first para ChromeOS que analisa arquivos soltos da pasta Downloads, sugere destinos, permite revisão e move os itens selecionados com mecanismos de segurança.
 
+## Problema, público e resultado
+
+**Problema.** A pasta Downloads acumula arquivos soltos e organizá-los à mão é demorado e arriscado.
+
+**Para quem.** Usuários de ChromeOS que querem organizar a pasta Downloads com segurança.
+
+**O que entrega.** Análise dos arquivos soltos, sugestão de destino por confiança, revisão individual, modo Simular que não move nada, proteção contra sobrescrita e desfazer da última operação, tudo local e sem enviar arquivos a serviços externos.
+
+**Tecnologias.** JavaScript, PWA (Service Worker e manifest), File System Access API, GitHub Pages.
+
+**Qualidade e evidências.** Funcionamento offline após a primeira carga e verificação de tamanho antes de remover o original. Este repositório não tem testes automatizados.
+
 ## Recursos Ultimate
 
 - seleção explícita da pasta autorizada pelo usuário;
